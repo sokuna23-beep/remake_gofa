@@ -1,0 +1,6 @@
+{
+  "name": "GOFA Academy",
+  "description": "Application de gestion d'académie de football basée à Mbour, Sénégal. Suivi des joueurs, matchs, classements et galerie.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
