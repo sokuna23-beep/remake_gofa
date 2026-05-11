@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "Player": {
+      "title": "Player",
+      "description": "A player in the GOFA Academy",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nom": { "type": "string" },
+        "poste": { "type": "string" },
+        "age": { "type": "number" },
+        "categorie": { "type": "string" },
+        "stage_info": { "type": "string" },
+        "flag": { "type": "string" },
+        "photo_url": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nom", "poste", "categorie"]
+    },
+    "Match": {
+      "title": "Match",
+      "description": "A football match (past or future)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "adversaire": { "type": "string" },
+        "date": { "type": "string" },
+        "heure": { "type": "string" },
+        "lieu": { "type": "string" },
+        "type": { "type": "string" },
+        "logoAdversaire": { "type": "string" },
+        "resultat": { "type": "string" },
+        "scoreLocal": { "type": "number" },
+        "scoreAdverse": { "type": "number" },
+        "status": { "type": "string", "enum": ["upcoming", "finished"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["adversaire", "date", "status"]
+    },
+    "User": {
+      "title": "User",
+      "description": "App user profile and roles",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "players": {
+      "schema": { "$ref": "#/entities/Player" },
+      "description": "Collection of academy players"
+    },
+    "matches": {
+      "schema": { "$ref": "#/entities/Match" },
+      "description": "Collection of matches"
+    },
+    "users": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Collection of user profiles for access control"
+    }
+  }
+}

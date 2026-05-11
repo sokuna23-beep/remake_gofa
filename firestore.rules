@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ---------------------------------------------------------
+    // HELPERS
+    // ---------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // ---------------------------------------------------------
+    // VALIDATIONS
+    // ---------------------------------------------------------
+    function isValidPlayer(data) {
+      return data.keys().hasAll(['nom', 'poste', 'categorie']) &&
+             data.nom is string && data.nom.size() <= 100 &&
+             data.poste is string && data.poste.size() <= 100 &&
+             data.categorie is string && data.categorie.size() <= 20;
+    }
+
+    function isValidMatch(data) {
+      return data.keys().hasAll(['adversaire', 'date', 'status']) &&
+             data.adversaire is string && data.adversaire.size() <= 100 &&
+             data.date is string && data.date.size() <= 50 &&
+             data.status in ['upcoming', 'finished'];
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             data.email is string &&
+             data.role in ['admin', 'user'];
+    }
+
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------
+    // COLLECTIONS
+    // ---------------------------------------------------------
+
+    // Users: Profiles and roles
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
+      allow update: if isSignedIn() && request.auth.uid == userId && 
+                    incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']) &&
+                    isValidUser(incoming());
+      // Admins can manage roles
+      allow update: if isAdmin() && isValidUser(incoming());
+    }
+
+    // Players: Publicly readable, admin editable
+    match /players/{playerId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidPlayer(incoming());
+      allow update: if isAdmin() && isValidPlayer(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Matches: Publicly readable, admin editable
+    match /matches/{matchId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidMatch(incoming());
+      allow update: if isAdmin() && isValidMatch(incoming());
+      allow delete: if isAdmin();
+    }
+  }
+}

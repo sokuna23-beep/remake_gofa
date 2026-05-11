@@ -33,13 +33,17 @@ import {
   Info,
   Search,
   Star,
+  Shield,
   Plus,
   Upload,
+  User as UserIcon,
+  Trash2,
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-// Import du client Supabase (à configurer dans .env)
-import { supabase } from './lib/supabase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { auth, db, signIn, logOut } from './lib/firebase';
+import { doc, getDoc, collection, query, orderBy, onSnapshot, addDoc, deleteDoc, limit } from 'firebase/firestore';
 
 // Définition des types pour les onglets de l'application
 type Tab = 'home' | 'matchs' | 'classement' | 'joueurs' | 'academie' | 'galerie' | 'contact' | 'notifications' | 'news';
@@ -50,14 +54,51 @@ export default function App() {
   // Paramètre optionnel pour définir l'onglet secondaire (ex: Matchs > Résultats)
   const [matchSubTab, setMatchSubTab] = useState<'prochains' | 'resultats' | 'classements'>('prochains');
   const [unreadCount, setUnreadCount] = useState(3);
+  const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // Simulation d'une session admin pour le user sokuna23@gmail.com
-  const toggleAdmin = () => {
-    setIsAdmin(!isAdmin);
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        // Fetch user role from Firestore
+        try {
+          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          if (userDoc.exists()) {
+            setIsAdmin(userDoc.data().role === 'admin');
+          }
+        } catch (error) {
+          console.error("Error fetching user role:", error);
+        }
+      } else {
+        setIsAdmin(false);
+      }
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogin = async () => {
+    try {
+      await signIn();
+    } catch (error) {
+      console.error("Login Error:", error);
+    }
+  };
+
+  const handleLogout = async () => {
+    await logOut();
   };
 
   const renderContent = () => {
+    if (loading) {
+      return (
+        <div className="flex-1 flex items-center justify-center p-20">
+          <div className="w-12 h-12 border-4 border-secondary border-t-transparent rounded-full animate-spin"></div>
+        </div>
+      );
+    }
     switch (activeTab) {
       case 'home':
         return <HomeScreen onNavigate={(tab, sub) => {
@@ -65,9 +106,9 @@ export default function App() {
           if (sub) setMatchSubTab(sub as any);
         }} />;
       case 'matchs':
-        return <MatchsScreen initialSubTab={matchSubTab} />;
+        return <MatchsScreen initialSubTab={matchSubTab} isAdmin={isAdmin} />;
       case 'classement':
-        return <MatchsScreen initialSubTab="classements" />;
+        return <MatchsScreen initialSubTab="classements" isAdmin={isAdmin} />;
       case 'joueurs':
         return <JoueursScreen isAdmin={isAdmin} />;
       case 'academie':
@@ -75,7 +116,7 @@ export default function App() {
       case 'galerie':
         return <GalerieScreen />;
       case 'contact':
-        return <ContactScreen isAdmin={isAdmin} onToggleAdmin={toggleAdmin} />;
+        return <ContactScreen user={user} onLogin={handleLogin} onLogout={handleLogout} isAdmin={isAdmin} />;
       case 'notifications':
         return <NotificationsScreen />;
       case 'news':
@@ -223,25 +264,16 @@ function HomeScreen({ onNavigate }: { onNavigate: (tab: Tab, sub?: string) => vo
   const [latestResult, setLatestResult] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  // Exemple d'appel à Supabase pour récupérer le dernier résultat
+  // Fetch latest result from Firestore
   useEffect(() => {
-    async function fetchLatestResult() {
-      try {
-        const { data, error } = await supabase
-          .from('matchs')
-          .select('*')
-          .order('date', { ascending: false })
-          .limit(1)
-          .single();
-        
-        if (data) setLatestResult(data);
-        setLoading(false);
-      } catch (err) {
-        console.error("Erreur Supabase:", err);
-        setLoading(false);
+    const q = query(collection(db, 'matches'), orderBy('date', 'desc'), limit(1));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        setLatestResult({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
       }
-    }
-    fetchLatestResult();
+      setLoading(false);
+    });
+    return () => unsubscribe();
   }, []);
 
   return (
@@ -380,12 +412,13 @@ function HomeScreen({ onNavigate }: { onNavigate: (tab: Tab, sub?: string) => vo
  * Écran Calendrier / Matchs
  * Reproduction exacte de la maquette avec onglets Prochains, Résultats et Classements.
  */
-function MatchsScreen({ initialSubTab = 'prochains' }: { initialSubTab?: 'prochains' | 'resultats' | 'classements' }) {
+function MatchsScreen({ initialSubTab = 'prochains', isAdmin }: { initialSubTab?: 'prochains' | 'resultats' | 'classements', isAdmin: boolean }) {
   const [subTab, setSubTab] = useState(initialSubTab);
   const [matchs, setMatchs] = useState<any[]>([]);
   const [resultats, setResultats] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedMatch, setSelectedMatch] = useState<any>(null);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState<'infos' | 'lineup' | 'stats'>('infos');
 
   useEffect(() => {
@@ -393,29 +426,14 @@ function MatchsScreen({ initialSubTab = 'prochains' }: { initialSubTab?: 'procha
   }, [initialSubTab]);
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const { data: prochainsData } = await supabase
-          .from('matchs')
-          .select('*')
-          .is('termine', false)
-          .order('date', { ascending: true });
-        
-        const { data: resultsData } = await supabase
-          .from('matchs')
-          .select('*')
-          .is('termine', true)
-          .order('date', { ascending: false });
-
-        if (prochainsData) setMatchs(prochainsData);
-        if (resultsData) setResultats(resultsData);
-        setLoading(false);
-      } catch (err) {
-        console.error("Erreur Supabase:", err);
-        setLoading(false);
-      }
-    }
-    fetchData();
+    const q1 = query(collection(db, 'matches'), orderBy('date', 'asc'));
+    const unsubscribe = onSnapshot(q1, (snapshot) => {
+      const allMatchs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setMatchs(allMatchs.filter((m: any) => m.status === 'upcoming'));
+      setResultats(allMatchs.filter((m: any) => m.status === 'finished'));
+      setLoading(false);
+    });
+    return () => unsubscribe();
   }, []);
 
   // Match en vedette par défaut
@@ -469,6 +487,19 @@ function MatchsScreen({ initialSubTab = 'prochains' }: { initialSubTab?: 'procha
       </div>
 
       <div className="p-6">
+        {isAdmin && (
+          <div className="fixed bottom-24 right-6 z-40">
+            <motion.button 
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={() => setIsAddModalOpen(true)}
+              className="w-14 h-14 flex items-center justify-center bg-secondary text-primary rounded-[20px] shadow-[0_15px_30px_rgba(255,210,63,0.4)] transition-all border-b-4 border-primary/20"
+            >
+              <Plus size={32} />
+            </motion.button>
+          </div>
+        )}
+
         {subTab === 'prochains' && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-6">
             <h2 className="text-primary font-black text-[10px] uppercase tracking-[0.4em] mb-4 flex items-center gap-2 italic">
@@ -826,7 +857,21 @@ function MatchsScreen({ initialSubTab = 'prochains' }: { initialSubTab?: 'procha
             </div>
 
             {/* Footer Fixe pour le Match Center */}
-            <div className="p-6 bg-white border-t border-gray-100 shadow-[0_-10px_30px_rgba(0,0,0,0.05)]">
+            <div className="p-6 bg-white border-t border-gray-100 shadow-[0_-10px_30px_rgba(0,0,0,0.05)] space-y-3">
+               {isAdmin && selectedMatch.id && (
+                  <button 
+                    onClick={async () => {
+                      if (window.confirm("Supprimer ce match ?")) {
+                        await deleteDoc(doc(db, 'matches', selectedMatch.id));
+                        setSelectedMatch(null);
+                      }
+                    }}
+                    className="w-full bg-red-50 text-red-500 py-4 rounded-[25px] font-black italic text-[11px] uppercase tracking-[0.2em] border border-red-100 flex items-center justify-center gap-2"
+                  >
+                    <Trash2 size={16} />
+                    SUPPRIMER LE MATCH
+                  </button>
+               )}
                <button 
                  onClick={() => setSelectedMatch(null)}
                  className="w-full bg-primary text-white py-5 rounded-[25px] font-black italic text-[11px] uppercase tracking-[0.2em] active:scale-95 transition-all shadow-xl shadow-primary/20"
@@ -837,7 +882,131 @@ function MatchsScreen({ initialSubTab = 'prochains' }: { initialSubTab?: 'procha
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Modal d'ajout de match */}
+      <AnimatePresence>
+        {isAddModalOpen && (
+          <AddMatchModal 
+            onClose={() => setIsAddModalOpen(false)} 
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+function AddMatchModal({ onClose }: { onClose: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    adversaire: '',
+    date: '',
+    heure: '',
+    stade: 'Stade Caroline Faye',
+    competition: 'Ligue des Prodiges',
+    status: 'upcoming'
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await addDoc(collection(db, 'matches'), {
+        ...formData,
+        equipe_domicile: "GOFA",
+        createdAt: new Date().toISOString()
+      });
+      onClose();
+    } catch (error) {
+      console.error("Add match error:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[120] bg-primary/80 backdrop-blur-sm flex items-center justify-center p-4"
+    >
+      <div className="bg-white w-full max-w-sm rounded-[40px] p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-black text-primary italic uppercase">Ajouter un match</h2>
+          <button onClick={onClose} className="text-primary"><X size={24} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block ml-2">Adversaire</label>
+            <input 
+              placeholder="Ex: Mballing" 
+              required
+              className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold"
+              value={formData.adversaire}
+              onChange={e => setFormData({...formData, adversaire: e.target.value})}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block ml-2">Date</label>
+              <input 
+                type="date" 
+                required
+                className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold"
+                value={formData.date}
+                onChange={e => setFormData({...formData, date: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block ml-2">Heure</label>
+              <input 
+                placeholder="16h00" 
+                required
+                className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold"
+                value={formData.heure}
+                onChange={e => setFormData({...formData, heure: e.target.value})}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block ml-2">Compétition</label>
+            <input 
+              placeholder="Ex: Ligue des Prodiges" 
+              className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold"
+              value={formData.competition}
+              onChange={e => setFormData({...formData, competition: e.target.value})}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block ml-2">Stade</label>
+            <input 
+              placeholder="Lieu / Stade" 
+              className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold"
+              value={formData.stade}
+              onChange={e => setFormData({...formData, stade: e.target.value})}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block ml-2">Statut</label>
+            <select 
+              className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold"
+              value={formData.status}
+              onChange={e => setFormData({...formData, status: e.target.value})}
+            >
+              <option value="upcoming">À venir</option>
+              <option value="finished">Terminé</option>
+            </select>
+          </div>
+          <button 
+            type="submit"
+            disabled={loading}
+            className="w-full bg-secondary text-primary py-5 rounded-[25px] font-black uppercase italic shadow-xl shadow-secondary/20"
+          >
+            {loading ? "Création..." : "Enregistrer le match"}
+          </button>
+        </form>
+      </div>
+    </motion.div>
   );
 }
 
@@ -892,29 +1061,24 @@ function JoueursScreen({ isAdmin }: { isAdmin: boolean }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Fetch players from Supabase
-  const fetchPlayers = async () => {
+  // Fetch players from Firestore
+  const fetchPlayers = () => {
     setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('joueurs')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error("Erreur lors de la récupération des joueurs:", error);
-      } else if (data) {
-        setDbPlayers(data);
-      }
-    } catch (err) {
-      console.error("Erreur:", err);
-    } finally {
+    const q = query(collection(db, 'players'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setDbPlayers(data);
       setLoading(false);
-    }
+    }, (err) => {
+      console.error("Firestore Error:", err);
+      setLoading(false);
+    });
+    return unsubscribe;
   };
 
   useEffect(() => {
-    fetchPlayers();
+    const unsubscribe = fetchPlayers();
+    return () => unsubscribe();
   }, []);
 
   const [selectedPlayer, setSelectedPlayer] = useState<any>(null);
@@ -1039,6 +1203,7 @@ function JoueursScreen({ isAdmin }: { isAdmin: boolean }) {
         {selectedPlayer && (
           <PlayerProfileModal 
             player={selectedPlayer} 
+            isAdmin={isAdmin}
             onClose={() => setSelectedPlayer(null)} 
           />
         )}
@@ -1047,7 +1212,19 @@ function JoueursScreen({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
-function PlayerProfileModal({ player, onClose }: { player: any, onClose: () => void }) {
+function PlayerProfileModal({ player, onClose, isAdmin }: { player: any, onClose: () => void, isAdmin: boolean }) {
+  const handleDelete = async () => {
+    if (!window.confirm("Voulez-vous vraiment supprimer ce joueur ?")) return;
+    try {
+      if (player.id) {
+        await deleteDoc(doc(db, 'players', player.id));
+        onClose();
+      }
+    } catch (error) {
+      console.error("Delete player error:", error);
+    }
+  };
+
   return (
     <motion.div 
       initial={{ x: '100%' }}
@@ -1125,6 +1302,16 @@ function PlayerProfileModal({ player, onClose }: { player: any, onClose: () => v
           <button className="w-full bg-secondary text-primary py-5 rounded-[25px] font-black italic text-[11px] uppercase tracking-[0.2em] shadow-xl shadow-secondary/20 active:scale-95 transition-all">
             PARCOURS DU JOUEUR
           </button>
+
+          {isAdmin && player.id && (
+            <button 
+              onClick={handleDelete}
+              className="w-full bg-red-50 text-red-500 py-5 rounded-[25px] font-black italic text-[11px] uppercase tracking-[0.2em] border border-red-100 flex items-center justify-center gap-2"
+            >
+              <Trash2 size={16} />
+              SUPPRIMER LE JOUEUR
+            </button>
+          )}
         </div>
       </div>
     </motion.div>
@@ -1165,42 +1352,20 @@ function AddPlayerModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
     setLoading(true);
 
     try {
-      let photo_url = "";
+      // Pour l'instant on utilise le previewUrl (blob local) ou une URL par défaut
+      // Dans une version complète on utiliserait Firebase Storage
+      const photo_url = previewUrl || "";
 
-      // 1. Upload image si présente
-      if (imageFile) {
-        const fileExt = imageFile.name.split('.').pop();
-        const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
-        const filePath = `joueurs/${fileName}`;
+      await addDoc(collection(db, 'players'), {
+        nom: formData.nom,
+        poste: formData.poste,
+        age: parseInt(formData.age),
+        categorie: formData.categorie,
+        stage_info: formData.stage_info,
+        photo_url: photo_url,
+        createdAt: new Date().toISOString()
+      });
 
-        const { error: uploadError } = await supabase.storage
-          .from('assets') // Bucket name attendu par défaut
-          .upload(filePath, imageFile);
-
-        if (!uploadError) {
-          const { data: { publicUrl } } = supabase.storage
-            .from('assets')
-            .getPublicUrl(filePath);
-          photo_url = publicUrl;
-        } else {
-          console.warn("Erreur upload storage (le bucket 'assets' existe-t-il?)", uploadError);
-          // On continue sans image si l'upload échoue (fallback)
-        }
-      }
-
-      // 2. Insert en base
-      const { error } = await supabase
-        .from('joueurs')
-        .insert([{
-          nom: formData.nom,
-          poste: formData.poste,
-          age: parseInt(formData.age),
-          categorie: formData.categorie,
-          stage_info: formData.stage_info,
-          photo_url: photo_url || null
-        }]);
-
-      if (error) throw error;
       onSuccess();
     } catch (err) {
       console.error("Erreur lors de la création du joueur:", err);
@@ -1701,59 +1866,90 @@ function GalerieScreen() {
  * Écran Contact
  * Informations de contact et localisation de l'académie.
  */
-function ContactScreen({ isAdmin, onToggleAdmin }: { isAdmin?: boolean, onToggleAdmin?: () => void }) {
+function ContactScreen({ user, onLogin, onLogout, isAdmin }: { user: User | null, onLogin: () => void, onLogout: () => void, isAdmin: boolean }) {
   return (
-    <div className="p-6 text-left">
-      <div className="bg-primary p-8 rounded-[40px] text-center text-white mb-8 border-b-8 border-secondary">
-          <Users size={64} className="mx-auto mb-4 text-secondary/30" />
-          <h2 className="text-xl font-black italic">CONTACT</h2>
-          <p className="text-xs opacity-70 mt-2">Nous sommes à votre écoute</p>
+    <div className="p-6 text-left pb-24 min-h-screen bg-gray-50">
+      <div className="bg-primary p-12 rounded-[40px] text-center text-white mb-8 relative overflow-hidden shadow-2xl border-b-8 border-secondary">
+          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
+          <Users size={64} className="mx-auto mb-4 text-secondary/30 relative z-10" />
+          <h2 className="text-2xl font-black italic relative z-10 uppercase tracking-tighter">Compte & Contact</h2>
+          <p className="text-xs opacity-70 mt-2 relative z-10 font-medium">Gérez votre profil et contactez-nous</p>
       </div>
 
-      <div className="space-y-4">
-        {onToggleAdmin && (
-          <div className="bg-white p-5 rounded-[25px] flex items-center justify-between shadow-sm border border-secondary/20">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-secondary/20 rounded-2xl flex items-center justify-center text-primary">
-                <Info size={24} />
+      <div className="space-y-6">
+        {/* Auth Card */}
+        <div className="bg-white p-8 rounded-[40px] shadow-sm border border-gray-100 text-center relative overflow-hidden">
+          {user ? (
+            <div className="space-y-4">
+              <div className="w-24 h-24 bg-primary/5 rounded-[30px] mx-auto flex items-center justify-center border-2 border-primary/5 overflow-hidden">
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt={user.displayName || "User"} className="w-full h-full object-cover" />
+                ) : (
+                  <UserIcon size={40} className="text-primary" />
+                )}
               </div>
               <div>
-                <p className="text-xs font-bold text-gray-400">Mode Administration</p>
-                <p className="text-sm font-black text-primary uppercase">{isAdmin ? 'Activé' : 'Désactivé'}</p>
+                <p className="font-black text-primary italic uppercase text-lg">{user.displayName || user.email?.split('@')[0]}</p>
+                <div className="flex items-center justify-center gap-2 mt-1">
+                  <div className={`w-2 h-2 rounded-full ${isAdmin ? 'bg-secondary animate-pulse' : 'bg-green-400'}`}></div>
+                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-[0.2em]">
+                    {isAdmin ? "Rôle: ADMIN" : "Rôle: MEMBRE"}
+                  </p>
+                </div>
+              </div>
+              <div className="pt-4 flex flex-col gap-3">
+                <button 
+                  onClick={onLogout}
+                  className="w-full bg-gray-50 text-gray-400 py-4 rounded-2xl font-black italic text-[11px] uppercase tracking-widest hover:bg-red-50 hover:text-red-500 transition-all border border-gray-100"
+                >
+                  Déconnexion
+                </button>
               </div>
             </div>
-            <button 
-              onClick={onToggleAdmin}
-              className={`w-12 h-6 rounded-full transition-all relative ${isAdmin ? 'bg-secondary' : 'bg-gray-200'}`}
-            >
-              <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${isAdmin ? 'right-1' : 'left-1'}`}></div>
-            </button>
-          </div>
-        )}
+          ) : (
+            <div className="space-y-6 py-4">
+              <div className="w-20 h-20 bg-secondary/10 rounded-[30px] mx-auto flex items-center justify-center">
+                <UserIcon size={40} className="text-secondary" />
+              </div>
+              <div>
+                <h3 className="font-black text-primary italic uppercase text-sm mb-1 tracking-tight">Accès Privilégié</h3>
+                <p className="text-gray-400 text-[10px] leading-relaxed uppercase tracking-widest font-bold">Connectez-vous pour voir l'administration</p>
+              </div>
+              <button 
+                onClick={onLogin}
+                className="w-full bg-secondary text-primary py-5 rounded-[25px] font-black italic text-[12px] uppercase tracking-[0.2em] shadow-xl shadow-secondary/20 active:scale-95 transition-all border-b-4 border-primary/20"
+              >
+                Se connecter avec Google
+              </button>
+            </div>
+          )}
+        </div>
 
-        <div className="bg-white p-5 rounded-[25px] flex items-center gap-4 shadow-sm">
-          <div className="w-12 h-12 bg-secondary/20 rounded-2xl flex items-center justify-center text-primary">
-            <Phone size={24} />
+        <div className="grid grid-cols-1 gap-4">
+          <div className="bg-white p-6 rounded-[30px] flex items-center gap-5 shadow-sm border border-gray-100 group hover:border-secondary/30 transition-all">
+            <div className="w-14 h-14 bg-primary/5 rounded-2xl flex items-center justify-center text-primary group-hover:bg-secondary/20 transition-all">
+              <Phone size={24} className="group-hover:scale-110 transition-transform" />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Présidence</p>
+              <p className="text-base font-black text-primary uppercase italic">+221 78 129 27 91</p>
+            </div>
           </div>
-          <div>
-            <p className="text-xs font-bold text-gray-400">Présidence</p>
-            <p className="text-base font-black text-primary">+221 78 129 27 91</p>
+
+          <div className="bg-white p-6 rounded-[30px] flex items-center gap-5 shadow-sm border border-gray-100 group hover:border-secondary/30 transition-all">
+            <div className="w-14 h-14 bg-primary/5 rounded-2xl flex items-center justify-center text-primary group-hover:bg-secondary/20 transition-all">
+              <Mail size={24} className="group-hover:scale-110 transition-transform" />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Secrétariat</p>
+              <p className="text-sm font-black text-primary italic">gofacorp@mbour.sn</p>
+            </div>
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-[25px] flex items-center gap-4 shadow-sm">
-          <div className="w-12 h-12 bg-secondary/20 rounded-2xl flex items-center justify-center text-primary">
-            <Mail size={24} />
-          </div>
-          <div>
-            <p className="text-xs font-bold text-gray-400">Secrétariat</p>
-            <p className="text-sm font-black text-primary">gofacorp@mbour.sn</p>
-          </div>
-        </div>
-
-        <button className="w-full bg-primary text-white py-4 rounded-[25px] font-black italic shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
-          <MapPin size={20} />
-          LOCALISER L'ACADÉMIE
+        <button className="w-full bg-primary text-white py-6 rounded-[30px] font-black italic shadow-xl shadow-primary/20 flex items-center justify-center gap-3 active:scale-95 transition-all border-b-4 border-black/20 group">
+          <MapPin size={22} className="text-secondary group-hover:animate-bounce" />
+          <span className="uppercase tracking-widest text-xs">Localiser l'académie</span>
         </button>
       </div>
     </div>
