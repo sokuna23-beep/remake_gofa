@@ -1368,19 +1368,30 @@ function PlayerRow({ name, pos, age, cat, stage, flag, image }: { name: string, 
 function AcademieScreen() {
   const [showHistory, setShowHistory] = useState(false);
   const [showStaff, setShowStaff] = useState(false);
+  const [showInstallations, setShowInstallations] = useState(false);
 
   return (
     <div className="flex flex-col text-left pb-24">
-       <div className="bg-primary p-12 text-center text-white pb-16 relative overflow-hidden">
-          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
+       <div className="bg-primary pt-16 pb-16 px-12 text-center text-white relative overflow-hidden">
+          {/* Image de fond */}
+          <div className="absolute inset-0 z-0">
+            <img 
+              src="https://images.unsplash.com/photo-1574629810360-7efbbe195018?q=80&w=1200&auto=format&fit=crop" 
+              className="w-full h-full object-cover opacity-40 mix-blend-overlay"
+              alt="Academy Background"
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-primary/20 via-primary/80 to-primary"></div>
+          </div>
+
           <motion.div
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
+            className="relative z-10"
           >
-            <School size={64} className="text-secondary mx-auto mb-4 drop-shadow-lg" />
+            <School size={64} className="text-secondary mx-auto mb-4 drop-shadow-2xl" />
           </motion.div>
-          <h2 className="text-4xl font-black italic relative z-10">ACADÉMIE</h2>
-          <p className="text-secondary font-bold tracking-[0.3em] text-[10px] uppercase mt-2 relative z-10">Le talent se construit ici</p>
+          <h2 className="text-4xl font-black italic relative z-10 tracking-tight">ACADÉMIE</h2>
+          <p className="text-secondary font-black tracking-[0.4em] text-[10px] uppercase mt-2 relative z-10">Le talent se construit ici</p>
        </div>
 
        <div className="px-6 -mt-8 space-y-4">
@@ -1419,7 +1430,11 @@ function AcademieScreen() {
              </div>
           </div>
 
-          <AcademieSection icon={<MapPin/>} title="Installations" />
+          <AcademieSection 
+            icon={<MapPin/>} 
+            title="Installations" 
+            onClick={() => setShowInstallations(true)}
+          />
        </div>
 
        {/* Modal d'Histoire */}
@@ -1435,17 +1450,100 @@ function AcademieScreen() {
            <StaffModal onClose={() => setShowStaff(false)} />
          )}
        </AnimatePresence>
+
+       {/* Modal Installations */}
+       <AnimatePresence>
+         {showInstallations && (
+           <InstallationsModal onClose={() => setShowInstallations(false)} />
+         )}
+       </AnimatePresence>
     </div>
+  );
+}
+
+function InstallationsModal({ onClose }: { onClose: () => void }) {
+  const facilities = [
+    { name: "Stade GOFA", type: "Terrain Réglementaire", feature: "Pelouse synthétique dernière génération", icon: "🏟️" },
+    { name: "Centre de Performance", type: "Salle de Musculation", feature: "Équipements pro et suivi data", icon: "💪" },
+    { name: "Espace Médical", type: "Récupération", feature: "Cryothérapie et kinésithérapie", icon: "🏥" },
+    { name: "Résidence des Talents", type: "Hébergement", feature: "30 chambres équipées pour les internes", icon: "🏠" },
+    { name: "Salle Multimédia", type: "Éducation", feature: "Cours de langues et analyses vidéo", icon: "💻" }
+  ];
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 20 }}
+      className="fixed inset-0 z-[120] bg-white flex flex-col pt-12"
+    >
+      <div className="px-8 flex justify-between items-center mb-8">
+        <div>
+          <h2 className="text-2xl font-black italic text-primary uppercase tracking-tighter">Installations</h2>
+          <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest">Infrastructures d'élite</p>
+        </div>
+        <button 
+          onClick={onClose}
+          className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-primary"
+        >
+          <X size={24} />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-6 pb-12 space-y-6">
+        {/* Localisation Mbour */}
+        <div className="bg-primary p-6 rounded-[35px] text-white overflow-hidden relative shadow-xl shadow-primary/20">
+          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
+          <div className="relative z-10 flex items-start gap-4">
+            <div className="w-12 h-12 bg-secondary/20 rounded-2xl flex items-center justify-center shrink-0">
+              <MapPin size={24} className="text-secondary" />
+            </div>
+            <div>
+              <h3 className="font-black italic uppercase text-sm mb-1 tracking-wide">Situé à Mbour</h3>
+              <p className="text-white/70 text-xs leading-relaxed italic">
+                Notre académie est implantée au cœur de Mbour, ville de football, à proximité de la Petite Côte. Un emplacement stratégique offrant un climat idéal pour la formation.
+              </p>
+              <div className="mt-4 flex items-center gap-2 px-3 py-2 bg-white/10 rounded-xl w-fit">
+                <span className="text-[10px] font-black uppercase italic tracking-wider">Quartier Saly, Mbour, Sénégal</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Liste des équipements */}
+        <div className="space-y-4">
+          <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-2 mb-4">Nos équipements</h4>
+          {facilities.map((fac, i) => (
+            <motion.div 
+              key={i}
+              initial={{ x: 20, opacity: 0 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className="bg-gray-50 p-5 rounded-[30px] border border-gray-100 flex items-center gap-5"
+            >
+              <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-2xl shadow-sm border border-gray-100 shrink-0">
+                {fac.icon}
+              </div>
+              <div>
+                <h3 className="font-black text-primary text-sm uppercase italic leading-none mb-1">{fac.name}</h3>
+                <p className="text-secondary font-black text-[9px] uppercase tracking-widest mb-1">{fac.type}</p>
+                <p className="text-gray-400 text-[10px] italic">{fac.feature}</p>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </motion.div>
   );
 }
 
 function StaffModal({ onClose }: { onClose: () => void }) {
   const staffMembers = [
-    { name: "Pape Bouba Diop", role: "Directeur Technique", desc: "Expert en détection de talents", img: "https://xsgames.co/randomusers/assets/avatars/male/1.jpg" },
-    { name: "Moussa Ndiaye", role: "Entraîneur Principal U17", desc: "Ancien international Sénégalais", img: "https://images.unsplash.com/photo-1549476464-37392f717551?q=80&w=800&auto=format&fit=crop" },
-    { name: "Fatou Binetou", role: "Préparateur Physique", desc: "Spécialiste haute performance", img: "https://xsgames.co/randomusers/assets/avatars/female/1.jpg" },
-    { name: "Dr. Amadou Fall", role: "Médecin Sportif", desc: "Suivi médical et traumatologie", img: "https://xsgames.co/randomusers/assets/avatars/male/3.jpg" },
-    { name: "Ibrahima Sarr", role: "Analyste Vidéo", desc: "Optimisation tactique et data", img: "https://xsgames.co/randomusers/assets/avatars/male/4.jpg" }
+    { name: "Pape Bouba Diop", role: "Directeur Technique", desc: "Expert en détection de talents" },
+    { name: "Moussa Ndiaye", role: "Entraîneur Principal U17", desc: "Ancien international Sénégalais" },
+    { name: "Fatou Binetou", role: "Préparateur Physique", desc: "Spécialiste haute performance" },
+    { name: "Dr. Amadou Fall", role: "Médecin Sportif", desc: "Suivi médical et traumatologie" },
+    { name: "Ibrahima Sarr", role: "Analyste Vidéo", desc: "Optimisation tactique et data" }
   ];
 
   return (
@@ -1473,15 +1571,13 @@ function StaffModal({ onClose }: { onClose: () => void }) {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ delay: i * 0.05 }}
-              className="bg-white/5 p-4 rounded-[30px] border border-white/10 flex items-center gap-5 group hover:bg-white/10 transition-all"
+              className="bg-white/5 p-6 rounded-[30px] border border-white/10 flex flex-col gap-2 group hover:bg-white/10 transition-all text-left"
             >
-              <div className="w-20 h-20 rounded-2xl overflow-hidden grayscale group-hover:grayscale-0 transition-all shadow-xl">
-                <img src={member.img} alt={member.name} className="w-full h-full object-cover" />
-              </div>
               <div className="flex-1">
-                <h3 className="text-white font-black uppercase text-sm italic">{member.name}</h3>
-                <p className="text-secondary font-black text-[9px] uppercase tracking-widest mb-1">{member.role}</p>
-                <p className="text-white/40 text-[10px] italic">{member.desc}</p>
+                <h3 className="text-white font-black uppercase text-lg italic group-hover:text-secondary transition-colors">{member.name}</h3>
+                <p className="text-secondary font-black text-[10px] uppercase tracking-[0.2em] mb-2">{member.role}</p>
+                <div className="w-8 h-1 bg-secondary/30 mb-3 rounded-full"></div>
+                <p className="text-white/60 text-xs italic leading-relaxed">{member.desc}</p>
               </div>
             </motion.div>
           ))}
