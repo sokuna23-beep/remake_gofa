@@ -53,6 +53,15 @@ service cloud.firestore {
              data.role in ['admin', 'user'];
     }
 
+    function isValidRegistration(data) {
+      return data.keys().hasAll(['nom', 'prenom', 'dateNaissance', 'poste', 'telephoneParents']) &&
+             data.nom is string && data.nom.size() <= 100 &&
+             data.prenom is string && data.prenom.size() <= 100 &&
+             data.dateNaissance is string &&
+             data.poste is string &&
+             data.telephoneParents is string && data.telephoneParents.size() <= 20;
+    }
+
     // Default Deny
     match /{document=**} {
       allow read, write: if false;
@@ -62,13 +71,19 @@ service cloud.firestore {
     // COLLECTIONS
     // ---------------------------------------------------------
 
+    // Registrations: Publicly creatable, admin readable/editable
+    match /registrations/{regId} {
+      allow create: if isValidRegistration(incoming());
+      allow read, update, delete: if isAdmin();
+    }
+
     // Users: Profiles and roles
     match /users/{userId} {
       allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
       allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
       allow update: if isSignedIn() && request.auth.uid == userId && 
-                    incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']) &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoURL', 'nom', 'prenom', 'poste', 'telephone', 'updatedAt']) &&
                     isValidUser(incoming());
       // Admins can manage roles
       allow update: if isAdmin() && isValidUser(incoming());

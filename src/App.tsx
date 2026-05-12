@@ -43,10 +43,10 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth, db, signIn, logOut } from './lib/firebase';
-import { doc, getDoc, collection, query, orderBy, onSnapshot, addDoc, deleteDoc, limit } from 'firebase/firestore';
+import { doc, getDoc, collection, query, orderBy, onSnapshot, addDoc, deleteDoc, limit, updateDoc } from 'firebase/firestore';
 
 // Définition des types pour les onglets de l'application
-type Tab = 'home' | 'matchs' | 'classement' | 'joueurs' | 'academie' | 'galerie' | 'contact' | 'notifications' | 'news';
+type Tab = 'home' | 'matchs' | 'classement' | 'joueurs' | 'academie' | 'galerie' | 'contact' | 'notifications' | 'news' | 'inscriptions';
 
 export default function App() {
   // État de l'onglet actif
@@ -59,7 +59,13 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Safety timeout for loading state
+    const timeout = setTimeout(() => {
+      setLoading(false);
+    }, 5000);
+
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      clearTimeout(timeout);
       setUser(currentUser);
       if (currentUser) {
         // Fetch user role from Firestore
@@ -76,14 +82,22 @@ export default function App() {
       }
       setLoading(false);
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      clearTimeout(timeout);
+    };
   }, []);
 
   const handleLogin = async () => {
     try {
       await signIn();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login Error:", error);
+      let message = "Impossible d'ouvrir la fenêtre de connexion Google.";
+      if (error.message && !error.message.includes("Object")) {
+        message = error.message;
+      }
+      alert(`Erreur de connexion : ${message}\n\nConseil: Assurez-vous que les pop-ups sont autorisés pour ce site.`);
     }
   };
 
@@ -114,13 +128,15 @@ export default function App() {
       case 'academie':
         return <AcademieScreen />;
       case 'galerie':
-        return <GalerieScreen />;
+        return <GalerieScreen isAdmin={isAdmin} />;
       case 'contact':
-        return <ContactScreen user={user} onLogin={handleLogin} onLogout={handleLogout} isAdmin={isAdmin} />;
+        return <ContactScreen user={user} onLogin={handleLogin} onLogout={handleLogout} isAdmin={isAdmin} onNavigate={setActiveTab} />;
       case 'notifications':
         return <NotificationsScreen />;
       case 'news':
         return <NewsScreen />;
+      case 'inscriptions':
+        return <InscriptionsScreen onBack={() => setActiveTab('contact')} user={user} />;
       default:
         return <HomeScreen onNavigate={(tab) => setActiveTab(tab)} />;
     }
@@ -1839,25 +1855,126 @@ function AcademieSection({ icon, title, onClick }: { icon: React.ReactNode, titl
  * Écran Galerie
  * Portfolio photos des matchs et moments forts de l'académie.
  */
-function GalerieScreen() {
+function GalerieScreen({ isAdmin }: { isAdmin: boolean }) {
+  const [photos, setPhotos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isAdding, setIsAdding] = useState(false);
+  const [newPhoto, setNewPhoto] = useState({ title: '', url: '' });
+
+  useEffect(() => {
+    const q = query(collection(db, 'gallery'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setPhotos(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleAddPhoto = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await addDoc(collection(db, 'gallery'), {
+        ...newPhoto,
+        createdAt: new Date().toISOString()
+      });
+      setIsAdding(false);
+      setNewPhoto({ title: '', url: '' });
+    } catch (error) {
+      console.error("Gallery add error:", error);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm("Supprimer cette photo ?")) {
+      await deleteDoc(doc(db, 'gallery', id));
+    }
+  };
+
   return (
-    <div className="p-6 text-left">
+    <div className="p-6 text-left pb-24">
       <div className="flex justify-between items-center mb-8 pt-4">
-        <h1 className="text-2xl font-black text-primary italic uppercase underline decoration-secondary decoration-4">Galerie</h1>
-        <div className="bg-primary text-white px-3 py-1 rounded-full text-[10px] font-black italic">MBOUR 2026</div>
+        <div>
+          <h1 className="text-2xl font-black text-primary italic uppercase underline decoration-secondary decoration-4 leading-none">Galerie</h1>
+          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-1">Les moments forts</p>
+        </div>
+        {isAdmin && (
+          <button 
+            onClick={() => setIsAdding(true)}
+            className="bg-secondary text-primary p-3 rounded-2xl shadow-lg shadow-secondary/20 active:scale-95 transition-all"
+          >
+            <Plus size={24} />
+          </button>
+        )}
       </div>
 
-       <div className="grid grid-cols-2 gap-4">
-          {[1,2,3,4,5,6].map((i) => (
-            <div key={i} className="aspect-square bg-gray-200 rounded-3xl overflow-hidden relative border-2 border-white shadow-sm">
-               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-               <div className="absolute bottom-3 left-3 text-white">
-                  <p className="text-[10px] font-black italic">Match U17</p>
-                  <p className="text-[8px] opacity-70">12 Avril 2026</p>
-               </div>
-            </div>
-          ))}
-       </div>
+       {loading ? (
+         <div className="flex justify-center p-10"><div className="w-8 h-8 border-4 border-secondary border-t-transparent rounded-full animate-spin"></div></div>
+       ) : (
+         <div className="grid grid-cols-2 gap-4">
+            {photos.length > 0 ? photos.map((photo) => (
+              <div key={photo.id} className="aspect-square bg-gray-200 rounded-3xl overflow-hidden relative border-2 border-white shadow-sm group">
+                 <img src={photo.url || "https://images.unsplash.com/photo-1574629810360-7efbbe195018?q=80&w=400&auto=format&fit=crop"} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" alt={photo.title} />
+                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent"></div>
+                 <div className="absolute bottom-3 left-3 right-3 text-white">
+                    <p className="text-[10px] font-black italic uppercase leading-tight truncate">{photo.title}</p>
+                    <p className="text-[8px] opacity-60 uppercase font-bold tracking-tighter">{new Date(photo.createdAt).toLocaleDateString('fr-FR')}</p>
+                 </div>
+                 {isAdmin && (
+                   <button 
+                    onClick={() => handleDelete(photo.id)}
+                    className="absolute top-2 right-2 w-8 h-8 bg-red-500/80 text-white rounded-xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                   >
+                     <Trash2 size={16} />
+                   </button>
+                 )}
+              </div>
+            )) : (
+              <div className="col-span-2 py-20 text-center text-gray-300 font-bold italic uppercase text-xs opacity-50">Aucune photo dans la galerie</div>
+            )}
+         </div>
+       )}
+
+       <AnimatePresence>
+         {isAdding && (
+           <motion.div 
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            className="fixed inset-0 z-[200] bg-white pt-12 flex flex-col"
+           >
+              <div className="flex items-center justify-between px-6 pb-6 border-b border-gray-100">
+                <button onClick={() => setIsAdding(false)} className="p-2 text-primary"><ChevronLeft size={24} /></button>
+                <h2 className="text-sm font-black italic uppercase text-primary">Ajouter une Photo</h2>
+                <div className="w-10"></div>
+              </div>
+              <form onSubmit={handleAddPhoto} className="p-8 space-y-6">
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Titre de la photo</label>
+                    <input 
+                      required
+                      className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold outline-none border-none focus:ring-2 focus:ring-secondary/20"
+                      placeholder="Ex: Finale U17 Mbour"
+                      value={newPhoto.title}
+                      onChange={e => setNewPhoto({...newPhoto, title: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">URL de l'image</label>
+                    <input 
+                      required
+                      className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold outline-none border-none focus:ring-2 focus:ring-secondary/20"
+                      placeholder="https://..."
+                      value={newPhoto.url}
+                      onChange={e => setNewPhoto({...newPhoto, url: e.target.value})}
+                    />
+                  </div>
+                </div>
+                <button className="w-full bg-primary text-white py-5 rounded-[25px] font-black uppercase italic tracking-widest text-sm shadow-xl active:scale-95 transition-all">AJOUTER À LA GALERIE</button>
+              </form>
+           </motion.div>
+         )}
+       </AnimatePresence>
     </div>
   );
 }
@@ -1866,7 +1983,10 @@ function GalerieScreen() {
  * Écran Contact
  * Informations de contact et localisation de l'académie.
  */
-function ContactScreen({ user, onLogin, onLogout, isAdmin }: { user: User | null, onLogin: () => void, onLogout: () => void, isAdmin: boolean }) {
+function ContactScreen({ user, onLogin, onLogout, isAdmin, onNavigate }: { user: User | null, onLogin: () => void, onLogout: () => void, isAdmin: boolean, onNavigate: (tab: Tab) => void }) {
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isManagingRegs, setIsManagingRegs] = useState(false);
+
   return (
     <div className="p-6 text-left pb-24 min-h-screen bg-gray-50">
       <div className="bg-primary p-12 rounded-[40px] text-center text-white mb-8 relative overflow-hidden shadow-2xl border-b-8 border-secondary">
@@ -1899,6 +2019,22 @@ function ContactScreen({ user, onLogin, onLogout, isAdmin }: { user: User | null
               </div>
               <div className="pt-4 flex flex-col gap-3">
                 <button 
+                  onClick={() => setIsEditingProfile(true)}
+                  className="w-full bg-primary text-white py-4 rounded-2xl font-black italic text-[11px] uppercase tracking-widest shadow-lg shadow-primary/20 active:scale-95 transition-all"
+                >
+                  Modifier mon Profil
+                </button>
+                
+                {isAdmin && (
+                  <button 
+                    onClick={() => setIsManagingRegs(true)}
+                    className="w-full bg-secondary text-primary py-4 rounded-2xl font-black italic text-[11px] uppercase tracking-widest shadow-lg shadow-secondary/20 active:scale-95 transition-all"
+                  >
+                    Gérer les Inscriptions
+                  </button>
+                )}
+
+                <button 
                   onClick={onLogout}
                   className="w-full bg-gray-50 text-gray-400 py-4 rounded-2xl font-black italic text-[11px] uppercase tracking-widest hover:bg-red-50 hover:text-red-500 transition-all border border-gray-100"
                 >
@@ -1920,6 +2056,19 @@ function ContactScreen({ user, onLogin, onLogout, isAdmin }: { user: User | null
                 className="w-full bg-secondary text-primary py-5 rounded-[25px] font-black italic text-[12px] uppercase tracking-[0.2em] shadow-xl shadow-secondary/20 active:scale-95 transition-all border-b-4 border-primary/20"
               >
                 Se connecter avec Google
+              </button>
+              
+              <div className="flex items-center gap-4 my-2">
+                <div className="flex-1 h-px bg-gray-100"></div>
+                <span className="text-[8px] font-black text-gray-300 uppercase tracking-widest">OU</span>
+                <div className="flex-1 h-px bg-gray-100"></div>
+              </div>
+
+              <button 
+                onClick={() => onNavigate('inscriptions')}
+                className="w-full bg-white text-primary py-5 rounded-[25px] font-black italic text-[12px] uppercase tracking-[0.2em] shadow-sm border border-gray-100 active:scale-95 transition-all"
+              >
+                Rejoindre l'académie
               </button>
             </div>
           )}
@@ -1951,6 +2100,188 @@ function ContactScreen({ user, onLogin, onLogout, isAdmin }: { user: User | null
           <MapPin size={22} className="text-secondary group-hover:animate-bounce" />
           <span className="uppercase tracking-widest text-xs">Localiser l'académie</span>
         </button>
+      </div>
+
+      <AnimatePresence>
+        {isEditingProfile && user && (
+          <ProfileEditModal 
+            user={user} 
+            onClose={() => setIsEditingProfile(false)} 
+          />
+        )}
+        {isManagingRegs && isAdmin && (
+          <AdminRegistrationManager 
+            onClose={() => setIsManagingRegs(false)} 
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/**
+ * Écran des Inscriptions
+ * Formulaire pour rejoindre l'académie GOFA.
+ */
+function InscriptionsScreen({ onBack, user }: { onBack: () => void, user: User | null }) {
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [formData, setFormData] = useState({
+    nom: '',
+    prenom: '',
+    dateNaissance: '',
+    poste: '',
+    telephoneParents: ''
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await addDoc(collection(db, 'registrations'), {
+        ...formData,
+        userId: user?.uid || null,
+        userEmail: user?.email || null,
+        createdAt: new Date().toISOString()
+      });
+      setSuccess(true);
+      setTimeout(() => {
+        onBack();
+      }, 3000);
+    } catch (error) {
+      console.error("Registration error:", error);
+      alert("Une erreur est survenue lors de l'inscription.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (success) {
+    return (
+      <div className="p-6 text-center animate-in fade-in zoom-in-95 duration-500 min-h-screen flex flex-col justify-center items-center bg-white">
+        <div className="w-24 h-24 bg-green-50 rounded-[30px] flex items-center justify-center text-green-500 mb-6 mx-auto">
+          <Star size={48} className="fill-current animate-bounce" />
+        </div>
+        <h2 className="text-2xl font-black text-primary italic uppercase mb-2">Demande envoyée !</h2>
+        <p className="text-gray-400 text-sm font-medium italic max-w-xs mx-auto">Votre demande d'inscription a été transmise avec succès. Notre staff va l'étudier et vous contactera prochainement.</p>
+        <button onClick={onBack} className="mt-8 text-primary font-black text-xs uppercase tracking-widest border-b-2 border-secondary">RETOUR</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50 text-left">
+      {/* Header */}
+      <div className="bg-primary pt-12 pb-6 px-6 text-white flex items-center justify-between shadow-xl sticky top-0 z-50">
+        <button onClick={onBack} className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center text-white active:scale-90 transition-all">
+          <ChevronLeft size={24} />
+        </button>
+        <h2 className="text-lg font-black italic uppercase tracking-widest text-center">Fiche d'Inscription</h2>
+        <div className="w-10"></div>
+      </div>
+
+      <div className="p-8 pb-32">
+        <div className="text-center mb-10">
+          <h1 className="text-2xl font-black text-primary italic uppercase mb-2">Rejoignez GOFA</h1>
+          <div className="w-12 h-1.5 bg-secondary mx-auto rounded-full"></div>
+          {!user && (
+            <p className="text-[10px] text-gray-400 font-bold uppercase mt-4 italic">Note: Vous pouvez aussi vous connecter pour suivre votre demande.</p>
+          )}
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <div className="group">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4 mb-1 block">Nom de famille</label>
+              <label className="flex items-center gap-3 bg-white p-4 rounded-2xl shadow-sm border border-gray-100 group-focus-within:border-secondary transition-all">
+                <UserIcon size={20} className="text-gray-300 group-focus-within:text-secondary" />
+                <input 
+                  required
+                  placeholder="NOM"
+                  className="flex-1 bg-transparent border-none outline-none text-sm font-bold text-primary placeholder:text-gray-300 uppercase italic"
+                  value={formData.nom}
+                  onChange={e => setFormData({ ...formData, nom: e.target.value })}
+                />
+              </label>
+            </div>
+
+            <div className="group">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4 mb-1 block">Prénom</label>
+              <label className="flex items-center gap-3 bg-white p-4 rounded-2xl shadow-sm border border-gray-100 group-focus-within:border-secondary transition-all">
+                <UserIcon size={20} className="text-gray-300 group-focus-within:text-secondary" />
+                <input 
+                  required
+                  placeholder="PRÉNOM"
+                  className="flex-1 bg-transparent border-none outline-none text-sm font-bold text-primary placeholder:text-gray-300 uppercase italic"
+                  value={formData.prenom}
+                  onChange={e => setFormData({ ...formData, prenom: e.target.value })}
+                />
+              </label>
+            </div>
+
+            <div className="group">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4 mb-1 block">Date de naissance</label>
+              <label className="flex items-center gap-3 bg-white p-4 rounded-2xl shadow-sm border border-gray-100 group-focus-within:border-secondary transition-all">
+                <Calendar size={20} className="text-gray-300 group-focus-within:text-secondary" />
+                <input 
+                  required
+                  type="date"
+                  className="flex-1 bg-transparent border-none outline-none text-sm font-bold text-primary placeholder:text-gray-300"
+                  value={formData.dateNaissance}
+                  onChange={e => setFormData({ ...formData, dateNaissance: e.target.value })}
+                />
+              </label>
+            </div>
+
+            <div className="group">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4 mb-1 block">Poste sur le terrain</label>
+              <label className="flex items-center gap-3 bg-white p-4 rounded-2xl shadow-sm border border-gray-100 group-focus-within:border-secondary transition-all">
+                <Star size={20} className="text-gray-300 group-focus-within:text-secondary" />
+                <select 
+                  required
+                  className="flex-1 bg-transparent border-none outline-none text-sm font-bold text-primary italic uppercase"
+                  value={formData.poste}
+                  onChange={e => setFormData({ ...formData, poste: e.target.value })}
+                >
+                  <option value="">Sélectionnez un poste</option>
+                  <option value="Gardien">Gardien</option>
+                  <option value="Défenseur">Défenseur</option>
+                  <option value="Milieu">Milieu</option>
+                  <option value="Attaquant">Attaquant</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="group">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4 mb-1 block">Téléphone des parents</label>
+              <label className="flex items-center gap-3 bg-white p-4 rounded-2xl shadow-sm border border-gray-100 group-focus-within:border-secondary transition-all">
+                <Phone size={20} className="text-gray-300 group-focus-within:text-secondary" />
+                <input 
+                  required
+                  placeholder="EX: +221 ..."
+                  className="flex-1 bg-transparent border-none outline-none text-sm font-bold text-primary placeholder:text-gray-300"
+                  value={formData.telephoneParents}
+                  onChange={e => setFormData({ ...formData, telephoneParents: e.target.value })}
+                />
+              </label>
+            </div>
+          </div>
+
+          <button 
+            type="submit"
+            disabled={loading}
+            className="w-full bg-secondary text-primary py-6 rounded-[30px] font-black italic uppercase shadow-xl shadow-secondary/20 active:scale-95 transition-all text-sm tracking-[0.2em] mt-8"
+          >
+            {loading ? "ENVOI EN COURS..." : "TRANSMETTRE MA DEMANDE"}
+          </button>
+        </form>
+
+        <div className="mt-20 relative flex flex-col items-center">
+           <div className="relative z-10 w-24 h-24 mb-6 opacity-30">
+             <img src="/src/assets/images/regenerated_image_1778410416145.png" alt="Logo GOFA" className="w-full h-full object-contain grayscale" />
+           </div>
+           <p className="text-[10px] font-black italic text-gray-300 uppercase tracking-[0.3em]">GOFA ACADEMY • MBOUR</p>
+        </div>
       </div>
     </div>
   );
@@ -2170,5 +2501,212 @@ function RankRow({ rank, name, mj, pts, active }: { rank: number, name: string, 
       <span className="w-10 text-center text-gray-500 font-bold">{mj}</span>
       <span className="w-10 text-center text-primary italic underline decoration-secondary decoration-2">{pts}</span>
     </div>
+  );
+}
+
+function ProfileEditModal({ user, onClose }: { user: User, onClose: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    nom: '',
+    prenom: '',
+    poste: '',
+    telephone: ''
+  });
+
+  useEffect(() => {
+    async function fetchProfile() {
+      const docSnap = await getDoc(doc(db, 'users', user.uid));
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setFormData({
+          nom: data.nom || '',
+          prenom: data.prenom || '',
+          poste: data.poste || '',
+          telephone: data.telephone || ''
+        });
+      }
+    }
+    fetchProfile();
+  }, [user.uid]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        ...formData,
+        updatedAt: new Date().toISOString()
+      });
+      onClose();
+    } catch (error) {
+      console.error("Update profile error:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ y: '100%' }}
+      animate={{ y: 0 }}
+      exit={{ y: '100%' }}
+      className="fixed inset-0 z-[150] bg-white pt-12 flex flex-col"
+    >
+      <div className="flex items-center justify-between px-6 pb-6 border-b border-gray-100">
+        <button onClick={onClose} className="p-2 text-primary active:scale-90 transition-all"><ChevronLeft size={24} /></button>
+        <h2 className="text-sm font-black italic uppercase text-primary">Modifier mon Profil</h2>
+        <div className="w-10"></div>
+      </div>
+      <form onSubmit={handleSubmit} className="p-8 space-y-4 flex-1 overflow-y-auto">
+        <div className="space-y-4 pb-20">
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block ml-2">Nom</label>
+            <input 
+              required
+              className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-secondary/20"
+              value={formData.nom}
+              onChange={e => setFormData({...formData, nom: e.target.value})}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block ml-2">Prénom</label>
+            <input 
+              required
+              className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-secondary/20"
+              value={formData.prenom}
+              onChange={e => setFormData({...formData, prenom: e.target.value})}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block ml-2">Poste préféré</label>
+            <input 
+              className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-secondary/20"
+              value={formData.poste}
+              onChange={e => setFormData({...formData, poste: e.target.value})}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block ml-2">Téléphone</label>
+            <input 
+              className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-secondary/20"
+              value={formData.telephone}
+              onChange={e => setFormData({...formData, telephone: e.target.value})}
+            />
+          </div>
+        </div>
+        <div className="fixed bottom-0 left-0 right-0 p-6 bg-white border-t border-gray-100">
+          <button 
+            type="submit"
+            disabled={loading}
+            className="w-full bg-primary text-white py-5 rounded-[25px] font-black uppercase italic shadow-xl shadow-primary/20 active:scale-95 transition-all text-sm tracking-widest"
+          >
+            {loading ? "Enregistrement..." : "SAUVEGARDER"}
+          </button>
+        </div>
+      </form>
+    </motion.div>
+  );
+}
+
+function AdminRegistrationManager({ onClose }: { onClose: () => void }) {
+  const [loading, setLoading] = useState(true);
+  const [regs, setRegs] = useState<any[]>([]);
+
+  useEffect(() => {
+    const q = query(collection(db, 'registrations'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setRegs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleApprove = async (reg: any) => {
+    if (!window.confirm(`Valider l'inscription de ${reg.prenom} ${reg.nom} ?`)) return;
+    try {
+      // 1. Create player
+      await addDoc(collection(db, 'players'), {
+        nom: reg.nom,
+        prenom: reg.prenom,
+        poste: reg.poste,
+        dateNaissance: reg.dateNaissance,
+        telephoneParents: reg.telephoneParents,
+        categorie: "Nouvelle Recrue",
+        photo_url: "",
+        userId: reg.userId || null, // Link to user account
+        createdAt: new Date().toISOString()
+      });
+      // 2. If user exists, update their role to indicate they are a validated player
+      if (reg.userId) {
+        await updateDoc(doc(db, 'users', reg.userId), {
+          nom: reg.nom,
+          prenom: reg.prenom,
+          poste: reg.poste,
+          telephone: reg.telephoneParents,
+          isValidatedPlayer: true,
+          updatedAt: new Date().toISOString()
+        });
+      }
+      // 3. Delete registration
+      await deleteDoc(doc(db, 'registrations', reg.id));
+    } catch (error) {
+      console.error("Approve error:", error);
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    if (!window.confirm("Refuser cette inscription ?")) return;
+    await deleteDoc(doc(db, 'registrations', id));
+  };
+
+  return (
+    <motion.div 
+      initial={{ x: '100%' }}
+      animate={{ x: 0 }}
+      exit={{ x: '100%' }}
+      className="fixed inset-0 z-[150] bg-white pt-12 flex flex-col"
+    >
+      <div className="flex items-center justify-between px-6 pb-6 border-b border-gray-100">
+        <button onClick={onClose} className="p-2 text-primary active:scale-90 transition-all"><ChevronLeft size={24} /></button>
+        <h2 className="text-sm font-black italic uppercase text-primary">Inscriptions en attente</h2>
+        <div className="w-10"></div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {loading ? (
+          <div className="flex justify-center p-10"><div className="w-8 h-8 border-4 border-secondary border-t-transparent rounded-full animate-spin"></div></div>
+        ) : regs.length === 0 ? (
+          <div className="text-center p-10 text-gray-400 font-bold italic uppercase text-[10px]">Aucune inscription en attente</div>
+        ) : (
+          regs.map((reg) => (
+            <div key={reg.id} className="bg-gray-50 p-6 rounded-[30px] border border-gray-100 space-y-4 shadow-sm group hover:border-secondary/30 transition-all">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="font-black text-primary italic uppercase ">{reg.prenom} {reg.nom}</h3>
+                  <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{reg.poste} • {reg.dateNaissance}</p>
+                </div>
+                <div className="bg-secondary/20 text-secondary px-3 py-1 rounded-full text-[8px] font-black uppercase italic">Nouveau</div>
+              </div>
+              <div className="flex items-center gap-2 text-[10px] text-primary/60 font-bold italic bg-white/50 p-2 rounded-xl">
+                <Phone size={12} className="text-secondary" /> {reg.telephoneParents}
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => handleApprove(reg)}
+                  className="flex-1 bg-primary text-white py-3 rounded-xl font-black italic text-[10px] uppercase tracking-widest shadow-lg shadow-primary/20 active:scale-95 transition-all"
+                >
+                  Valider
+                </button>
+                <button 
+                  onClick={() => handleReject(reg.id)}
+                  className="flex-1 bg-red-50 text-red-500 py-3 rounded-xl font-black italic text-[10px] uppercase tracking-widest border border-red-100 active:scale-95 transition-all"
+                >
+                  Refuser
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </motion.div>
   );
 }
